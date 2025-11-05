@@ -33,6 +33,7 @@ Miscellaneous functions
 * IsStringSet &mdash; check if a string is set (not empty and not `nil`)
 * SafeString &mdash; returns a valid string object (empty string if nothing else works)
 * UserHostInfo &mdash; get information about the current user and computer hosting the program
+* MapToKeys &mdash; return a slice of all keys from a map
 
 
 

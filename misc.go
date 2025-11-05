@@ -232,3 +232,13 @@ func consumeWhiteSpace(in *bufio.Reader) (err error) {
 	}
 	return nil
 }
+
+// MapToKeys extracts and returns all keys from a map as a slice.
+// It works with maps having keys of any comparable type T.
+func MapToKeys[T comparable](key map[T]any) (keys []T) {
+	keys = make([]T, 0, len(key))
+	for k := range key {
+		keys = append(keys, k)
+	}
+	return keys
+}
