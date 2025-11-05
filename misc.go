@@ -65,6 +65,9 @@ func UserHostInfo() (userName string, hostName string, err error) {
 	return ui.Name, hostName, nil
 }
 
+// ConcatenateErrors combines a list of errors into a single error, where each
+// non-nil error is formatted and included in order.
+// Returns nil if all errors in the list are nil.
 func ConcatenateErrors(errList ...error) error {
 	if nil == errList {
 		return nil
