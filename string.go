@@ -50,6 +50,7 @@ func RecordString(outFileName string, inTx <-chan string, allDone func()) {
 				val, outFileName, err.Error())
 			defaultFatal()
 		}
+
 	}
 
 	if flagDebug {
@@ -135,4 +136,45 @@ func RecordCsv(outFileName string, inTx <-chan []string, allDone func()) {
 		_, _ = defaultPrintf("Finished output to file %s || required %f seconds\n",
 			fullFileName, time.Since(now).Seconds())
 	}
+}
+
+func RecordBytes(outFileName string, inTx <-chan []byte, allDone func()) {
+	now := time.Now()
+	defer allDone()
+	extension := path.Ext(outFileName)
+	if !IsStringSet(&extension) {
+		outFileName += ".log"
+	}
+	fullFileName := path.Join(defaultOutdir, outFileName)
+
+	bout, err := os.OpenFile(fullFileName,
+		os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	if nil != err {
+		_, _ = defaultPrintf("Failed to open %s because %s\n",
+			fullFileName, err.Error())
+		defaultFatal()
+		return
+	}
+	defer DeferError(bout.Close)
+	bw := bufio.NewWriterSize(bout, 1024*8)
+	defer DeferError(bw.Flush)
+
+	if flagDebug {
+		_, _ = defaultPrintf("started output to file %s\n", outFileName)
+	}
+
+	for val := range inTx {
+		_, err = bw.Write(val)
+		if nil != err {
+			_, _ = defaultPrintf("failed to write string %s to file %s because %s\n",
+				val, outFileName, err.Error())
+			defaultFatal()
+		}
+	}
+
+	if flagDebug {
+		_, _ = defaultPrintf("Finished output to file %s || required %f seconds\n",
+			fullFileName, time.Since(now).Seconds())
+	}
+
 }
