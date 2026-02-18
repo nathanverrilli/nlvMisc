@@ -102,7 +102,7 @@ func GetFunctionName(i interface{}) string {
 // builds readable JSON by adjusting indentation based on braces,
 // brackets, and formatting guidelines.
 func PrettifyJson(fin io.Reader, fout io.Writer, indent string) (err error) {
-	var ci int = 0
+	var ci = 0
 	var r rune
 	var sz int
 	var ind string
@@ -168,7 +168,7 @@ func outString(fout io.Writer, str string) {
 	var err error
 	_, err = fout.Write([]byte(str))
 	if nil != err {
-		miscPrintf("error writing string %s because %s", str, err.Error())
+		_, _ = miscPrintf("error writing string %s because %s", str, err.Error())
 	}
 }
 
@@ -176,7 +176,7 @@ func outRune(fout io.Writer, r rune) {
 	var err error
 	_, err = fout.Write([]byte{byte(r)})
 	if nil != err {
-		miscPrintf("error writing rune %c because %s", r, err.Error())
+		_, _ = miscPrintf("error writing rune %c because %s", r, err.Error())
 	}
 }
 
@@ -216,7 +216,7 @@ func consumeWhiteSpace(in *bufio.Reader) (err error) {
 		if unicode.IsSpace(r) {
 			continue
 		}
-		in.UnreadRune()
+		_ = in.UnreadRune()
 		break
 	}
 	// this is clumsy, but checking s==0 first would
