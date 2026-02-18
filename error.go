@@ -83,3 +83,11 @@ func DeferError(f func() error) {
 			file, line, err.Error())
 	}
 }
+
+func SafeFatal(val ...int) {
+	var x = 0
+	if len(val) > 0 {
+		x = val[0]
+	}
+	miscFatal(x)
+}

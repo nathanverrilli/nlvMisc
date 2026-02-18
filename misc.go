@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -241,4 +242,24 @@ func MapToKeys[T comparable](key map[T]any) (keyList []T) {
 		keyList = append(keyList, k)
 	}
 	return keyList
+}
+
+// GreaterLessEqual represents a type constraint for types supporting comparison operations (<, >, <=, >=).
+type GreaterLessEqual interface {
+	~string |
+		~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
+		~float32 | ~float64
+}
+
+// mapSortKeys returns a sorted slice of keys from a given map,
+// sorted in ascending order based on their natural order.
+// S and T must fulfill the misc.GreaterLessEqual constraint.
+func MapSortKeys[S GreaterLessEqual, T any](m map[S]T) []S {
+	keys := make([]S, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
 }
