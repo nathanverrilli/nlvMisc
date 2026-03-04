@@ -234,17 +234,23 @@ func consumeWhiteSpace(in *bufio.Reader) (err error) {
 	return nil
 }
 
-// MapToKeys extracts and returns all keys from a map as a slice.
-// It works with maps having keys of any comparable type T.
-func MapToKeys[T comparable](key map[T]any) (keyList []T) {
+// MapToKeySlice extracts and returns all keys from a map as a slice.
+func MapToKeySlice[T comparable, S any](key map[T]S) (keyList []T) {
 	keyList = make([]T, 0, len(key))
+	if len(key) == 0 {
+		return keyList
+	}
+	// ix := 0
 	for k := range key {
 		keyList = append(keyList, k)
+		// keyList[ix] = k
+		// ix++ // directly accessing ix causes a panic? Go runtime defect?
 	}
 	return keyList
 }
 
-// GreaterLessEqual represents a type constraint for types supporting comparison operations (<, >, <=, >=).
+// GreaterLessEqual represents a constraint for ordered types
+// including strings, bytes, runes, integers, and floating-point numbers.
 type GreaterLessEqual interface {
 	~string |
 		~int | ~int8 | ~int16 | ~int32 | ~int64 |
@@ -254,12 +260,10 @@ type GreaterLessEqual interface {
 
 // mapSortKeys returns a sorted slice of keys from a given map,
 // sorted in ascending order based on their natural order.
-// S and T must fulfill the misc.GreaterLessEqual constraint.
+// S must fulfill the misc.GreaterLessEqual constraint.
+// O(n + nlog(n)) at worst
 func MapSortKeys[S GreaterLessEqual, T any](m map[S]T) []S {
-	keys := make([]S, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
+	keys := MapToKeySlice(m)
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys
 }
