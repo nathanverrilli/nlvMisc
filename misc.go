@@ -262,8 +262,8 @@ type GreaterLessEqual interface {
 // sorted in ascending order based on their natural order.
 // S must fulfill the misc.GreaterLessEqual constraint.
 // O(n + nlog(n)) at worst
-func MapSortKeys[S GreaterLessEqual, T any](m map[S]T) []S {
-	keys := MapToKeySlice(m)
+func MapSortKeys[S GreaterLessEqual, T any](mk map[S]T) []S {
+	keys := MapToKeySlice(mk)
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys
 }
