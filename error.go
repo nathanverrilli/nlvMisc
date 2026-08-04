@@ -1,15 +1,21 @@
 package nlvMisc
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
 const CLOSE_BUFFER_SIZE = 4
 
+var atCloseMutex sync.Mutex
 var atClose []func() error
 var atCloseName []string
 
@@ -23,6 +29,8 @@ func init() {
 // AtCloseErr registers a function that returns an error
 // to be called when the application is closing.
 func AtCloseErr(f func() error) {
+	atCloseMutex.Lock()
+	defer atCloseMutex.Unlock()
 	atClose = append(atClose, f)
 	atCloseName = append(atCloseName, GetFunctionName(f))
 }
@@ -30,6 +38,8 @@ func AtCloseErr(f func() error) {
 // AtClose registers a function to be called upon program termination.
 // Functions are run in the reverse order they are registered.
 func AtClose(f func()) {
+	atCloseMutex.Lock()
+	defer atCloseMutex.Unlock()
 	atClose = append(atClose, func() error { f(); return nil })
 	atCloseName = append(atCloseName, GetFunctionName(f))
 }
@@ -39,19 +49,24 @@ func AtClose(f func()) {
 // flagDebug or flagVerbose is set.
 func FinishClose() {
 	var err error
-	if flagDebug {
+
+	// snapshot under lock, then run the functions unlocked so that a
+	// close function is free to register more cleanup (AtClose/AtCloseErr)
+	// or trigger a fatal exit without deadlocking on a non-reentrant mutex
+	atCloseMutex.Lock()
+	closeFns := slices.Clone(atClose)
+	closeNames := slices.Clone(atCloseName)
+	atCloseMutex.Unlock()
+
+	if IsDebug() {
 		_, _ = miscPrintf("Number of AtClose/AtCloseErr functions is %d (started with capacity %d)\n",
-			len(atClose), CLOSE_BUFFER_SIZE)
+			len(closeFns), CLOSE_BUFFER_SIZE)
 	}
-	for ix, fn := range slices.Backward(atClose) {
+	for ix, fn := range slices.Backward(closeFns) {
 		err = fn()
-		/* if flagDebug || flagVerbose {
-			_, _ = printf("AtClose running function %s\n",
-				atCloseName[ix])
-		} */
 		if nil != err {
 			_, _ = miscPrintf("AtClose function %s failed because %s\n",
-				atCloseName[ix], err.Error())
+				closeNames[ix], err.Error())
 		}
 	}
 }
@@ -90,4 +105,44 @@ func SafeFatal(val ...int) {
 		x = val[0]
 	}
 	miscFatal(x)
+}
+
+// ConcatenateErrors combines a list of errors into a single error, where each
+// non-nil error is formatted and included in order.
+// Returns nil if all errors in the list are nil.
+func ConcatenateErrors(errList ...error) error {
+	if nil == errList {
+		return nil
+	}
+	var sb strings.Builder
+
+	if 0 == len(errList) {
+		return nil
+	}
+
+	fmtString := "\n% " + strconv.Itoa(len(strconv.Itoa(len(errList)))) + "d.\t%s"
+	ix := 1
+	for _, err := range errList {
+		if err == nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf(fmtString, ix, err.Error()))
+		ix++
+	}
+	if sb.Len() > 0 {
+		return errors.New(sb.String())
+	}
+	return nil
+}
+
+// CheckFatalError handles an error by logging the function
+// name and error message, then terminates the program
+// execution.
+func CheckFatalError(err error) {
+	if nil == err {
+		return
+	}
+	fn := GetCallerFunctionName()
+	_, _ = miscPrintf("( %s ) Unexpected Fatal Error: %s\n", fn, err.Error())
+	miscFatal(-1)
 }
