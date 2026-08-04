@@ -18,8 +18,17 @@ func XPrintf(format string, a ...interface{}) (n int, err error) {
 	return miscPrintf(format, a...)
 }
 
-func IsDebug() bool   { return flagDebug }
-func IsVerbose() bool { return flagVerbose }
+func IsDebug() bool {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	return flagDebug
+}
+
+func IsVerbose() bool {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	return flagVerbose
+}
 
 // OptionOutputDir sets the output directory and returns the old value of the output directory.
 // Caller is responsible for ensuring this directory exists, even if the caller is using the
@@ -29,6 +38,20 @@ func OptionOutputDir(outdir string) (old string) {
 	defer optMutex.Unlock()
 	old, defaultOutdir = defaultOutdir, outdir
 	return old
+}
+
+// getOutputDir returns the current output directory.
+func getOutputDir() string {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	return defaultOutdir
+}
+
+// getCsvSep returns the current CSV field separator.
+func getCsvSep() rune {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	return defaultCvsSep
 }
 
 // OptionDebug sets the debug flag to the specified value and returns the old value of the debug flag.
@@ -57,10 +80,13 @@ func OptionPrintf(f func(format string, a ...interface{}) (n int, err error)) (o
 	return old
 }
 
-// defaultPrintf writes a formatted string to stderr. It returns the number of bytes
-// written and any write error encountered. It is a default print function, probably
-// overwritten by SafeLogPrint or xlog.Printf
+// defaultPrintf writes the formatted output to os.Stderr
+// and returns the number of bytes written and any write error.
+// Can be overridden by OptionPrintf, this is just a reasonable
+// default implementation if the larger program fails to provide one.
 func defaultPrintf(format string, a ...interface{}) (n int, err error) {
+	optMutex.Lock()
+	defer optMutex.Unlock()
 	return fmt.Fprintf(os.Stderr, format, a...)
 }
 
@@ -73,11 +99,16 @@ func OptionFatal(f func(retcode ...int)) (old func(retcode ...int)) {
 	return old
 }
 
+var fatalMutex sync.Mutex
+
 // defaultFatal terminates the program after executing cleanup functions in FinishClose,
 // then exits with the provided code, if provided. Ideally the larger function provides
 // a custom fatal method to close everything cleanly, but if not, there's always
 // defaultFatal as a fallback
+// do not permit multiple calls to defaultFatal!
 func defaultFatal(retcode ...int) {
+	fatalMutex.Lock()
+	defer fatalMutex.Unlock()
 	rc := 0
 	if len(retcode) > 0 {
 		rc = retcode[0]
