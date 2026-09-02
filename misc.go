@@ -1,25 +1,32 @@
 package nlvMisc
 
 import (
-	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"os/user"
 	"reflect"
 	"runtime"
-	"sort"
-	"strconv"
+	"slices"
 	"strings"
-	"unicode"
 )
 
 // DATE_OCPI time format for DateTime 2015-06-29T20:39:09
 // Jan 2 15:04:05 2006 MST
 // const DATE_OCPI = "2006-01-02T15:04:05"
 const DATE_YYMMDD string = "060102"
+
+type Integer interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+}
+
+type Numeric interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr |
+		~float32 | ~float64
+}
 
 // SafeString returns either the pointer to the string,
 // or a pointer to the empty string if the string is
@@ -66,30 +73,6 @@ func UserHostInfo() (userName string, hostName string, err error) {
 	return ui.Name, hostName, nil
 }
 
-// ConcatenateErrors combines a list of errors into a single error, where each
-// non-nil error is formatted and included in order.
-// Returns nil if all errors in the list are nil.
-func ConcatenateErrors(errList ...error) error {
-	if nil == errList {
-		return nil
-	}
-	var sb strings.Builder
-
-	fmtString := "\n% " + strconv.Itoa(int(math.Ceil(math.Log10(float64(len(errList)))))) + "d.\t%s"
-	ix := 1
-	for _, err := range errList {
-		if err == nil {
-			continue
-		}
-		sb.WriteString(fmt.Sprintf(fmtString, ix, err.Error()))
-		ix++
-	}
-	if sb.Len() > 0 {
-		return errors.New(sb.String())
-	}
-	return nil
-}
-
 // GetFunctionName returns the full name of the
 // given function as a string by using reflection
 // and runtime package.
@@ -97,173 +80,74 @@ func GetFunctionName(i interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 }
 
-// PrettifyJson reads JSON data from an input stream, reformats it with
-// the specified indentation, and writes it to an output stream. It
-// builds readable JSON by adjusting indentation based on braces,
-// brackets, and formatting guidelines.
-func PrettifyJson(fin io.Reader, fout io.Writer, indent string) (err error) {
-	var ci = 0
-	var r rune
-	var sz int
-	var ind string
-
-	in := bufio.NewReader(fin)
-	out := bufio.NewWriter(fout)
-
-	err = consumeWhiteSpace(in)
-	if err != nil {
-		return err
+// GetCallerFunctionName returns the name of the
+// calling function's caller as a string.
+// An optional skipcount argument determines the
+// stack frame to inspect.
+func GetCallerFunctionName(skipcount ...int) string {
+	var skip int = 2
+	if len(skipcount) > 0 {
+		skip = skipcount[0]
 	}
-	for r, sz, err = in.ReadRune(); sz > 0; r, sz, err = in.ReadRune() {
-		switch r {
-		case '{', '[':
-			ci++
-			ind = strings.Repeat(indent, ci)
-			outRune(out, r)
-			outRune(out, '\n')
-			outString(out, ind)
-			break
-		case '}', ']':
-			ci--
-			ind = strings.Repeat(indent, ci)
-			outRune(out, '\n')
-			outString(out, ind)
-			outRune(out, r)
-			outRune(out, '\n')
-			outString(out, ind)
-			break
-		case ',':
-			outRune(out, r)
-			outRune(out, '\n')
-			outString(out, ind)
-			break
-		case '"':
-			str, err := getTheString(in)
-			if nil != err {
-				return err
-			}
-			outRune(out, '"')
-			outString(out, str)
-			outRune(out, '"')
-			break
-		case ':':
-			outRune(out, r)
-			outRune(out, ' ')
-			break
-		default:
-			outRune(out, r)
-		}
-		err := consumeWhiteSpace(in)
-		if nil != err && err.Error() != "EOF" {
-			return err
-		}
+	pc, _, _, ok := runtime.Caller(skip)
+	if !ok {
+		return ""
 	}
-	if nil != err && err.Error() != "EOF" {
-		return err
+	fn := runtime.FuncForPC(pc)
+	if nil == fn {
+		return ""
 	}
-	return nil
-}
-
-func outString(fout io.Writer, str string) {
-	var err error
-	_, err = fout.Write([]byte(str))
-	if nil != err {
-		_, _ = miscPrintf("error writing string %s because %s", str, err.Error())
-	}
-}
-
-func outRune(fout io.Writer, r rune) {
-	var err error
-	_, err = fout.Write([]byte{byte(r)})
-	if nil != err {
-		_, _ = miscPrintf("error writing rune %c because %s", r, err.Error())
-	}
-}
-
-// getTheString reads a string from the provided reader, handling escaped
-// characters and stopping at a closing double quote. It returns the
-// extracted string and any error encountered during processing. Please
-// note that it expects the initial opening double quote to have been
-// consumed by the caller, and it consumes the ending double quote.
-func getTheString(in *bufio.Reader) (str string, err error) {
-	var sb strings.Builder
-	for r, sz, err := in.ReadRune(); sz > 0; r, sz, err = in.ReadRune() {
-		switch r {
-		case '"':
-			goto done
-		case '\\':
-			r, sz, err = in.ReadRune()
-			if err != nil {
-				return "", err
-			} else if sz == 0 {
-				return "", errors.New("unexpected EOF")
-			}
-		default:
-			sb.WriteRune(r)
-		}
-	}
-done:
-	return sb.String(), nil
-}
-
-// consumeWhiteSpace consumes and discards all leading whitespace characters
-// from the provided bufio.Reader.
-func consumeWhiteSpace(in *bufio.Reader) (err error) {
-	var r rune
-	var s int
-
-	for r, s, err = in.ReadRune(); s > 0; r, s, err = in.ReadRune() {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		_ = in.UnreadRune()
-		break
-	}
-	// this is clumsy, but checking s==0 first would
-	// turn any underlying error into 'Unexpected EOF'
-	// which is NOT the desired behavior. Blame io.Reader
-	// for returning nil error and s==0 for the first
-	// requested character that doesn't exist instead of
-	// a nice, standard EOF.
-	if err != nil {
-		return err
-	}
-	if 0 == s {
-		return errors.New("Unexpected EOF")
-	}
-	return nil
+	return fn.Name()
 }
 
 // MapToKeySlice extracts and returns all keys from a map as a slice.
 func MapToKeySlice[T comparable, S any](key map[T]S) (keyList []T) {
 	keyList = make([]T, 0, len(key))
-	if len(key) == 0 {
-		return keyList
-	}
-	// ix := 0
 	for k := range key {
 		keyList = append(keyList, k)
-		// keyList[ix] = k
-		// ix++ // directly accessing ix causes a panic? Go runtime defect?
 	}
 	return keyList
 }
 
-// GreaterLessEqual represents a constraint for ordered types
-// including strings, bytes, runes, integers, and floating-point numbers.
-type GreaterLessEqual interface {
-	~string |
-		~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
-		~float32 | ~float64
+// MapSortKeys returns the sorted keys of a map as a slice. Handles case-insensitive sorting for string keys.
+func MapSortKeys[S cmp.Ordered, T any](mk map[S]T) []S {
+	if len(mk) == 0 {
+		return []S{}
+	}
+
+	keys := MapToKeySlice(mk)
+
+	// Check if S is string or a type derived from string
+	if reflect.TypeOf(*new(S)).Kind() == reflect.String {
+		slices.SortFunc(keys, CompareStringWithoutCase)
+	} else {
+		slices.Sort(keys)
+	}
+	return keys
 }
 
-// mapSortKeys returns a sorted slice of keys from a given map,
-// sorted in ascending order based on their natural order.
-// S must fulfill the misc.GreaterLessEqual constraint.
-// O(n + nlog(n)) at worst
-func MapSortKeys[S GreaterLessEqual, T any](mk map[S]T) []S {
-	keys := MapToKeySlice(mk)
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-	return keys
+// func StringSliceSortInsensitive compares two ordered
+// elements a and b case-insensitively.
+// It returns -1 if a < b, 1 if a > b, and 0 if they are equal,
+// based on normalized lowercase comparison.
+func CompareStringWithoutCase[S cmp.Ordered](a, b S) int {
+	sa := reflect.ValueOf(a).String()
+	sb := reflect.ValueOf(b).String()
+
+	la := strings.ToLower(sa)
+	lb := strings.ToLower(sb)
+	if la != lb {
+		if la < lb {
+			return -1
+		}
+		return 1
+	}
+	// Tie-break with original case for deterministic output
+	if sa < sb {
+		return -1
+	}
+	if sa > sb {
+		return 1
+	}
+	return 0
 }

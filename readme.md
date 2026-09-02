@@ -3,7 +3,7 @@
 This collection of tooling functions are a general collection of functions useful for error handling, often-needed string functions, setup/shutdown, and other utility functions.
 
 ## chan.go &mdash; MultiChan Implementation
-This implementation provides a multi-channel structure that allows for efficient splitting of input &mdash; messages sent to a multi-channel are sent to all channels. This generic implementation has methods to create and add channels, and to close all channels. 
+todo: replace with much-improved MultiChan package
 
 ## error.go &mdash; Error Handling
 When things go wrong, cleanup and reporting is critical. 

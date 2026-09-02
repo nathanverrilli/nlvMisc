@@ -45,28 +45,37 @@ func AtClose(f func()) {
 }
 
 // FinishClose runs all functions in the atClose slice
-// __in reverse order__. Logs function names and errors if
-// flagDebug or flagVerbose is set.
+// __in reverse order__. Logs function names and errors.
+// It continues to run as long as new functions are registered
+// during the closing process.
 func FinishClose() {
 	var err error
 
-	// snapshot under lock, then run the functions unlocked so that a
-	// close function is free to register more cleanup (AtClose/AtCloseErr)
-	// or trigger a fatal exit without deadlocking on a non-reentrant mutex
-	atCloseMutex.Lock()
-	closeFns := slices.Clone(atClose)
-	closeNames := slices.Clone(atCloseName)
-	atCloseMutex.Unlock()
+	for {
+		// snapshot under lock, then run the functions unlocked so that a
+		// close function is free to register more cleanup (AtClose/AtCloseErr)
+		// or trigger a fatal exit without deadlocking on a non-reentrant mutex
+		atCloseMutex.Lock()
+		if len(atClose) == 0 {
+			atCloseMutex.Unlock()
+			break
+		}
+		closeFns := atClose
+		closeNames := atCloseName
+		atClose = make([]func() error, 0, CLOSE_BUFFER_SIZE)
+		atCloseName = make([]string, 0, CLOSE_BUFFER_SIZE)
+		atCloseMutex.Unlock()
 
-	if IsDebug() {
-		_, _ = miscPrintf("Number of AtClose/AtCloseErr functions is %d (started with capacity %d)\n",
-			len(closeFns), CLOSE_BUFFER_SIZE)
-	}
-	for ix, fn := range slices.Backward(closeFns) {
-		err = fn()
-		if nil != err {
-			_, _ = miscPrintf("AtClose function %s failed because %s\n",
-				closeNames[ix], err.Error())
+		if isDebug() {
+			_, _ = miscPrintf("Running %d AtClose/AtCloseErr functions (started with capacity %d)\n",
+				len(closeFns), CLOSE_BUFFER_SIZE)
+		}
+		for ix, fn := range slices.Backward(closeFns) {
+			err = fn()
+			if nil != err {
+				_, _ = miscPrintf("AtClose function %s failed because %s\n",
+					closeNames[ix], err.Error())
+			}
 		}
 	}
 }
@@ -81,8 +90,11 @@ func HandleSignal(signalChan <-chan os.Signal) {
 }
 
 // DeferError accounts for an at-close function that
-// returns an error at its close
+// returns an error at its close. It handles nil functions gracefully.
 func DeferError(f func() error) {
+	if f == nil {
+		return
+	}
 	err := f()
 	if nil != err {
 		_, file, line, ok := runtime.Caller(1)
@@ -120,7 +132,8 @@ func ConcatenateErrors(errList ...error) error {
 		return nil
 	}
 
-	fmtString := "\n% " + strconv.Itoa(len(strconv.Itoa(len(errList)))) + "d.\t%s"
+	width := len(strconv.Itoa(len(errList)))
+	fmtString := "\n%" + strconv.Itoa(width) + "d.\t%s"
 	ix := 1
 	for _, err := range errList {
 		if err == nil {
@@ -145,4 +158,16 @@ func CheckFatalError(err error) {
 	fn := GetCallerFunctionName()
 	_, _ = miscPrintf("( %s ) Unexpected Fatal Error: %s\n", fn, err.Error())
 	miscFatal(-1)
+}
+
+// CheckWarningErr logs a warning with the caller function name if
+// the passed error is not nil and returns true in that case.
+func CheckWarningErr(err error) (isErr bool) {
+	isErr = false
+	if nil != err {
+		fn := GetCallerFunctionName()
+		_, _ = miscPrintf("( %s ) Warning: %s\n", fn, err.Error())
+		isErr = true
+	}
+	return isErr
 }

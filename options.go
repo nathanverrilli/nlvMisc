@@ -9,22 +9,52 @@ import (
 var optMutex sync.Mutex // thread-safe these variables
 var flagDebug = false
 var flagVerbose = false
-var miscPrintf = defaultPrintf
-var miscFatal = defaultFatal
+var optPrintf = defaultPrintf
+var optFatal = defaultFatal
 var defaultOutdir = ".output"
-var defaultCvsSep = '\t'
+var defaultCsvSep = '\t'
+var optIndent = "\t"
 
+func OptionIndent(newIndent string) (oldIndent string) {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	oldIndent = optIndent
+	optIndent = newIndent
+	return oldIndent
+}
+
+// miscPrintf formats and writes output using a format string, protected by a mutex to ensure thread safety.
+func miscPrintf(format string, a ...interface{}) (n int, err error) {
+	optMutex.Lock()
+	f := optPrintf
+	optMutex.Unlock()
+	return f(format, a...)
+}
+
+// miscFatal invokes the configured fatal error function, passing optional return codes, and ensures thread safety.
+func miscFatal(retcode ...int) {
+	optMutex.Lock()
+	fatalReport := optFatal
+	defer optMutex.Unlock()
+	fatalReport(retcode...)
+}
+
+// XPrintf formats and writes log output using a format string and arguments,
+// ensuring thread safety via a mutex. It may use a log format from the calling
+// program, but defaults to writing stderr.
 func XPrintf(format string, a ...interface{}) (n int, err error) {
 	return miscPrintf(format, a...)
 }
 
-func IsDebug() bool {
+// isDebug checks if the debug mode is enabled by evaluating the `flagDebug` variable with thread safety.
+func isDebug() bool {
 	optMutex.Lock()
 	defer optMutex.Unlock()
 	return flagDebug
 }
 
-func IsVerbose() bool {
+// isVerbose checks if the verbose mode is enabled by evaluating the globally synchronized flagVerbose variable.
+func isVerbose() bool {
 	optMutex.Lock()
 	defer optMutex.Unlock()
 	return flagVerbose
@@ -51,7 +81,15 @@ func getOutputDir() string {
 func getCsvSep() rune {
 	optMutex.Lock()
 	defer optMutex.Unlock()
-	return defaultCvsSep
+	return defaultCsvSep
+}
+
+// OptionCsvSep sets the CSV field separator and returns the old value.
+func OptionCsvSep(sep rune) (old rune) {
+	optMutex.Lock()
+	defer optMutex.Unlock()
+	old, defaultCsvSep = defaultCsvSep, sep
+	return old
 }
 
 // OptionDebug sets the debug flag to the specified value and returns the old value of the debug flag.
@@ -76,7 +114,10 @@ func OptionVerbose(verbose bool) (old bool) {
 func OptionPrintf(f func(format string, a ...interface{}) (n int, err error)) (old func(format string, a ...interface{}) (n int, err error)) {
 	optMutex.Lock()
 	defer optMutex.Unlock()
-	old, miscPrintf = miscPrintf, f
+	old = optPrintf
+	if f != nil {
+		optPrintf = f
+	}
 	return old
 }
 
@@ -85,8 +126,6 @@ func OptionPrintf(f func(format string, a ...interface{}) (n int, err error)) (o
 // Can be overridden by OptionPrintf, this is just a reasonable
 // default implementation if the larger program fails to provide one.
 func defaultPrintf(format string, a ...interface{}) (n int, err error) {
-	optMutex.Lock()
-	defer optMutex.Unlock()
 	return fmt.Fprintf(os.Stderr, format, a...)
 }
 
@@ -95,7 +134,10 @@ func defaultPrintf(format string, a ...interface{}) (n int, err error) {
 func OptionFatal(f func(retcode ...int)) (old func(retcode ...int)) {
 	optMutex.Lock()
 	defer optMutex.Unlock()
-	old, miscFatal = miscFatal, f
+	old = optFatal
+	if f != nil {
+		optFatal = f
+	}
 	return old
 }
 

@@ -5,13 +5,13 @@ import (
 	"encoding/csv"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
-// set to prevent excessive disk block fragmentation
-const BIGBUFFSIZE = 1024 * 32
+const BIGBUFFSIZE = 1024 * 128
 
 // writeDirect writes the provided byte slice
 // `data` directly to the specified `io.Writer`.
@@ -40,24 +40,18 @@ func writeDirect(out io.Writer, data []byte) {
 // If writing fails, it logs the error and triggers a fatal exit.
 // allDone() is intended to be a sync.WaitGroup.Done().
 func RecordString(outFileName string, inTx <-chan string, allDone func()) {
-	var now time.Time
-	if IsDebug() {
-		now = time.Now()
-	}
+	now := time.Now()
 	defer allDone()
 
-	switch strings.ToLower(path.Ext(outFileName)) {
-	case ".json":
-		break
-	case ".txt":
-		break
-	default:
+	extension := filepath.Ext(outFileName)
+
+	if !IsStringSet(&extension) {
 		outFileName += ".txt"
 	}
 
-	ffn := path.Join(getOutputDir(), outFileName)
+	ffn := filepath.Join(getOutputDir(), outFileName)
 
-	out, err := os.OpenFile(ffn,
+	f, err := os.OpenFile(ffn,
 		os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if nil != err {
 		_, _ = miscPrintf("Failed to open %s because %s\n",
@@ -65,25 +59,59 @@ func RecordString(outFileName string, inTx <-chan string, allDone func()) {
 		miscFatal()
 		return
 	}
-	defer DeferError(out.Close)
-	defer DeferError(out.Sync)
+	defer DeferError(f.Close)
+	defer DeferError(f.Sync)
 
-	if IsDebug() {
+	if isDebug() {
 		_, _ = miscPrintf("started output to file %s\n", ffn)
 	}
-	bw := bufio.NewWriterSize(out, BIGBUFFSIZE) // disk block size usually multiple of 4K
+	bw := bufio.NewWriterSize(f, BIGBUFFSIZE) // disk block size usually multiple of 4K
 	defer DeferError(bw.Flush)
 
-	for val := range inTx {
-		writeDirect(bw, []byte(val))
-		writeDirect(bw, []byte("\n"))
+	if ".json" == strings.ToLower(extension) {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go recordJson(inTx, bw, wg.Done)
+		wg.Wait()
+	} else {
+		for val := range inTx {
+			writeDirect(bw, []byte(val))
+			writeDirect(bw, []byte("\r\n"))
+		}
 	}
 
-	if IsDebug() {
+	if isVerbose() || isDebug() {
 		_, _ = miscPrintf("Finished output to file %s || required %f seconds\n",
 			ffn, time.Since(now).Seconds())
 	}
-	return
+}
+
+func recordJson(inTx <-chan string, bw *bufio.Writer, allDone func()) {
+
+	var wg sync.WaitGroup
+	defer allDone()
+	pipeIn, pipeOut := io.Pipe()
+
+	wg.Go(func() {
+		err := PrettyPrintJSON(pipeIn, bw)
+		if nil != err {
+			_, _ = miscPrintf("pipeIn: Failed to read data to json formatting pipe because %s\n",
+				err.Error())
+			miscFatal()
+		}
+	})
+	for val := range inTx {
+		_, err := pipeOut.Write([]byte(val))
+		if nil != err {
+			_, _ = miscPrintf("pipeOut: Failed to write to json formatting pipe because %s\n",
+				err.Error())
+			miscFatal()
+		}
+	}
+
+	_ = pipeOut.Close()
+	wg.Wait()
+	_ = pipeIn.Close()
 }
 
 // RecordCsv writes CSV records to a file, ensuring proper formatting
@@ -95,13 +123,13 @@ func RecordString(outFileName string, inTx <-chan string, allDone func()) {
 func RecordCsv(outFileName string, inTx <-chan []string, allDone func()) {
 	now := time.Now()
 	defer allDone()
-	extension := path.Ext(outFileName)
+	extension := filepath.Ext(outFileName)
 	if !strings.EqualFold(extension, ".csv") {
 		outFileName += ".csv"
 	}
 
-	ffn := path.Join(getOutputDir(), outFileName)
-	out, err := os.OpenFile(ffn,
+	ffn := filepath.Join(getOutputDir(), outFileName)
+	f, err := os.OpenFile(ffn,
 		os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if nil != err {
 		_, _ = miscPrintf("Failed to open %s because %s\n",
@@ -109,11 +137,16 @@ func RecordCsv(outFileName string, inTx <-chan []string, allDone func()) {
 		miscFatal()
 		return
 	}
-	if IsDebug() {
+	defer DeferError(f.Close)
+	defer DeferError(f.Sync)
+
+	if isDebug() {
 		_, _ = miscPrintf("started output to file %s\n", ffn)
 	}
-	bout := bufio.NewWriterSize(out, BIGBUFFSIZE)
-	csvWriter := csv.NewWriter(bout)
+	bw := bufio.NewWriterSize(f, BIGBUFFSIZE)
+	defer DeferError(bw.Flush)
+
+	csvWriter := csv.NewWriter(bw)
 	csvWriter.Comma = getCsvSep()
 	csvWriter.UseCRLF = true
 
@@ -129,38 +162,13 @@ func RecordCsv(outFileName string, inTx <-chan []string, allDone func()) {
 
 	// flush writer
 	csvWriter.Flush()
-	err = csvWriter.Error()
-	if nil != err {
+	if err := csvWriter.Error(); nil != err {
 		_, _ = miscPrintf("Failed to flush CSV filewriter %s because %s\n",
 			ffn, err.Error())
 		miscFatal()
 	}
 
-	// flush buffered writer
-	err = bout.Flush()
-	if nil != err {
-		_, _ = miscPrintf("Failed to flush buffered io for csvwriter %s because %s\n",
-			ffn, err.Error())
-		miscFatal()
-	}
-
-	// flush to storage
-	err = out.Sync()
-	if nil != err {
-		_, _ = miscPrintf("Failed to sync file %s because %s\n",
-			ffn, err.Error())
-		miscFatal()
-	}
-
-	// close writer file
-	err = out.Close()
-	if nil != err {
-		_, _ = miscPrintf("Failed to close file %s because %s\n",
-			ffn, err.Error())
-		miscFatal()
-	}
-
-	if IsDebug() {
+	if isDebug() {
 		_, _ = miscPrintf("Finished output to file %s || required %f seconds\n",
 			ffn, time.Since(now).Seconds())
 	}
@@ -169,13 +177,13 @@ func RecordCsv(outFileName string, inTx <-chan []string, allDone func()) {
 func RecordBytes(outFileName string, inTx <-chan []byte, allDone func()) {
 	now := time.Now()
 	defer allDone()
-	extension := path.Ext(outFileName)
+	extension := filepath.Ext(outFileName)
 	if !IsStringSet(&extension) {
 		outFileName += ".log"
 	}
-	ffn := path.Join(getOutputDir(), outFileName)
+	ffn := filepath.Join(getOutputDir(), outFileName)
 
-	bout, err := os.OpenFile(ffn,
+	f, err := os.OpenFile(ffn,
 		os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if nil != err {
 		_, _ = miscPrintf("Failed to open %s because %s\n",
@@ -183,20 +191,20 @@ func RecordBytes(outFileName string, inTx <-chan []byte, allDone func()) {
 		miscFatal()
 		return
 	}
-	defer DeferError(bout.Close)
-	defer DeferError(bout.Sync)
-	bw := bufio.NewWriterSize(bout, BIGBUFFSIZE)
-	defer DeferError(bw.Flush)
+	defer DeferError(f.Close)
+	defer DeferError(f.Sync)
 
-	if IsDebug() {
+	if isDebug() {
 		_, _ = miscPrintf("started output to file %s\n", ffn)
 	}
+	bw := bufio.NewWriterSize(f, BIGBUFFSIZE)
+	defer DeferError(bw.Flush)
 
 	for val := range inTx {
 		writeDirect(bw, val)
 	}
 
-	if IsDebug() {
+	if isDebug() {
 		_, _ = miscPrintf("Finished output to file %s || required %f seconds\n",
 			ffn, time.Since(now).Seconds())
 	}
